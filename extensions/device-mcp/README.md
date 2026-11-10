@@ -82,6 +82,19 @@ cmd /c ".\device-mcp.exe < test.jsonl"
 - `ORBIT_TOKEN` 等凭据目前靠环境变量注入
 - 目标是**在线且 `goose serve` 可经 NPS 隧道访问**的设备；离线设备的代理会返回 5xx/404
 
+## 验证记录（2026-11-10）
+
+- 独立进程自测：`list_devices` → 3 台设备（1 在线）；`run_on_device` → 远端返回「收到」
+- 挂进 Goose 配置后，用 `goose run` 实测：
+  - 问设备列表 → 模型自动调用 `Device.listDevices`，返回真实设备
+  - 要求跨设备执行 → 模型调用 `Device.runOnDevice`，远端设备回复「收到，我在这台机器上」
+- 结论：**加设备能力不需要改 Goose 源码**，只需一份 `type: stdio` 扩展配置
+- 踩坑记录：
+  - 漏设 `Content-Type: application/json` → ACP 415
+  - 同名设备离线/在线并存 → 必须优先在线，否则代理返回 502/404
+  - PowerShell 管道默认 ASCII 编码，会把中文变成 `?`（用文件重定向或 `$OutputEncoding`）
+  - `goose serve` 所在设备需在线且 NPS 隧道可达
+
 ## 为什么先做独立进程
 
 - daemon（orbital-client）只暴露 `/api/ice-servers`、`/api/show-gui`、`/ws/desktop`，没有设备列表接口
