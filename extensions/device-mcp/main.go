@@ -46,9 +46,20 @@ type devicesResponse struct {
 	Data []device `json:"data"`
 }
 
+type appConfig struct {
+	server        string
+	token         string
+	internalToken string
+	deviceSecret  string
+}
+
 func main() {
-	server := strings.TrimRight(envOr("ORBIT_SERVER", "http://127.0.0.1:6700"), "/")
-	token := strings.TrimSpace(os.Getenv("ORBIT_TOKEN"))
+	cfg := appConfig{
+		server:        strings.TrimRight(envOr("ORBIT_SERVER", "http://127.0.0.1:6700"), "/"),
+		token:         strings.TrimSpace(os.Getenv("ORBIT_TOKEN")),
+		internalToken: strings.TrimSpace(os.Getenv("ORBIT_INTERNAL_TOKEN")),
+		deviceSecret:  strings.TrimSpace(os.Getenv("ORBIT_DEVICE_SECRET")),
+	}
 
 	sc := bufio.NewScanner(os.Stdin)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -56,7 +67,7 @@ func main() {
 	defer out.Flush()
 
 	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
+		line := strings.TrimSpace(strings.TrimPrefix(sc.Text(), "\ufeff"))
 		if line == "" {
 			continue
 		}
@@ -68,7 +79,7 @@ func main() {
 		if len(req.ID) == 0 || string(req.ID) == "null" {
 			continue
 		}
-		resp := handle(server, token, req)
+		resp := handle(cfg, req)
 		b, _ := json.Marshal(resp)
 		out.Write(b)
 		out.WriteByte('\n')
@@ -76,7 +87,7 @@ func main() {
 	}
 }
 
-func handle(server, token string, req rpcRequest) rpcResponse {
+func handle(cfg appConfig, req rpcRequest) rpcResponse {
 	switch req.Method {
 	case "initialize":
 		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
@@ -96,7 +107,7 @@ func handle(server, token string, req rpcRequest) rpcResponse {
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return rpcErr(req.ID, -32602, "invalid params")
 		}
-		text, err := callTool(server, token, p.Name, p.Arguments)
+		text, err := callTool(cfg, p.Name, p.Arguments)
 		if err != nil {
 			return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
 				"content": []map[string]any{{"type": "text", "text": err.Error()}},
@@ -130,13 +141,26 @@ func tools() []map[string]any {
 				"additionalProperties": false,
 			},
 		},
+		{
+			"name":        "run_on_device",
+			"description": "在目标设备上跑一轮任务（通过 ACP 派发）。",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"device": map[string]any{"type": "string", "description": "设备名称或 ID"},
+					"prompt": map[string]any{"type": "string", "description": "要设备执行的指令"},
+				},
+				"required":             []string{"device", "prompt"},
+				"additionalProperties": false,
+			},
+		},
 	}
 }
 
-func callTool(server, token, name string, args json.RawMessage) (string, error) {
+func callTool(cfg appConfig, name string, args json.RawMessage) (string, error) {
 	switch name {
 	case "list_devices":
-		ds, err := fetchDevices(server, token)
+		ds, err := fetchDevices(cfg.server, cfg.token)
 		if err != nil {
 			return "", err
 		}
@@ -146,7 +170,7 @@ func callTool(server, token, name string, args json.RawMessage) (string, error) 
 			Device string `json:"device"`
 		}
 		_ = json.Unmarshal(args, &a)
-		ds, err := fetchDevices(server, token)
+		ds, err := fetchDevices(cfg.server, cfg.token)
 		if err != nil {
 			return "", err
 		}
@@ -157,6 +181,39 @@ func callTool(server, token, name string, args json.RawMessage) (string, error) 
 			}
 		}
 		return "", fmt.Errorf("没找到设备 %q", a.Device)
+	case "run_on_device":
+		var a struct {
+			Device string `json:"device"`
+			Prompt string `json:"prompt"`
+		}
+		_ = json.Unmarshal(args, &a)
+		ds, err := fetchDevices(cfg.server, cfg.token)
+		if err != nil {
+			return "", err
+		}
+		q := strings.ToLower(strings.TrimSpace(a.Device))
+		var target *device
+		// 先按 id 精确匹配
+		for i := range ds {
+			if strings.ToLower(ds[i].ID) == q {
+				target = &ds[i]
+				break
+			}
+		}
+		// 再按名称匹配；同名时优先在线
+		if target == nil {
+			for i := range ds {
+				if strings.Contains(strings.ToLower(ds[i].Name), q) {
+					if target == nil || (ds[i].Status == "online" && target.Status != "online") {
+						target = &ds[i]
+					}
+				}
+			}
+		}
+		if target == nil {
+			return "", fmt.Errorf("没找到设备 %q", a.Device)
+		}
+		return runOnDevice(cfg.server, cfg.internalToken, cfg.deviceSecret, target.ID, target.OS, a.Prompt)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", name)
 	}
