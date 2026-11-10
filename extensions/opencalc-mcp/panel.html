@@ -253,6 +253,8 @@
       const result = await request('ui/initialize', {
         appInfo: { name: 'opencalc-panel', version: '0.1.0' },
         appCapabilities: {},
+        // 宿主（Goose 1.51 的 MCP Apps host）要求 protocolVersion 是字符串，且缺省会直接拒绝握手
+        protocolVersion: '2025-11-21',
       });
       const ctx = (result && result.hostContext) || {};
       setTheme(ctx.theme);
