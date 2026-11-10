@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenCalc</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #1d1d1f;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --head: #f6f7f9;
+    --accent: #7c3aed;
+    --error: #b42318;
+  }
+  [data-theme="dark"] {
+    --bg: #1d1d1f;
+    --fg: #f5f5f7;
+    --muted: #9ca3af;
+    --line: #3a3a3c;
+    --head: #2a2a2c;
+    --accent: #a78bfa;
+    --error: #f97066;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
+  body {
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+    padding: 10px 12px 14px;
+  }
+  .bar { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+  .title { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meta { color: var(--muted); font-size: 11px; white-space: nowrap; }
+  .spacer { flex: 1; }
+  button {
+    font: inherit; font-size: 11px; padding: 3px 9px; border-radius: 5px;
+    border: 1px solid var(--line); background: var(--head); color: var(--fg); cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  .wrap { overflow: auto; max-height: 620px; border: 1px solid var(--line); border-radius: 6px; }
+  table { border-collapse: collapse; width: 100%; font: 12px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; }
+  th, td { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 3px 7px; text-align: left; white-space: pre; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+  thead th { position: sticky; top: 0; background: var(--head); font-weight: 600; z-index: 1; }
+  tbody th, thead th.rowhead { position: sticky; left: 0; background: var(--head); color: var(--muted); font-weight: 500; text-align: right; min-width: 34px; }
+  td.num { text-align: right; }
+  .empty, .err, .hint { padding: 14px 12px; color: var(--muted); }
+  .err { color: var(--error); }
+  .hint code { background: var(--head); padding: 1px 4px; border-radius: 3px; }
+</style>
+</head>
+<body data-theme="light">
+  <div class="bar">
+    <span class="title" id="title">OpenCalc</span>
+    <span class="meta" id="meta"></span>
+    <span class="spacer"></span>
+    <button id="refresh" title="重新读取默认区域">刷新</button>
+  </div>
+  <div id="body" class="wrap"><div class="empty">等待表格数据…</div></div>
+
+<script>
+(() => {
+  const pending = new Map();
+  let reqId = 0;
+  let lastDoc = '';
+  let lastRange = 'A1:H20';
+  let rendered = false;
+  let busy = false;
+
+  const $ = (id) => document.getElementById(id);
+  const bodyEl = $('body');
+
+  function request(method, params, timeoutMs) {
+    return new Promise((resolve, reject) => {
+      const id = ++reqId;
+      pending.set(id, { resolve, reject });
+      window.parent.postMessage({ jsonrpc: '2.0', id, method, params }, '*');
+      setTimeout(() => {
+        if (pending.has(id)) {
+          pending.delete(id);
+          reject(new Error('请求超时：' + method));
+        }
+      }, timeoutMs || 30000);
+    });
+  }
+
+  function notify(method, params) {
+    window.parent.postMessage({ jsonrpc: '2.0', method, params }, '*');
+  }
+
+  function reportSize() {
+    notify('ui/notifications/size-changed', { height: Math.min(900, document.body.scrollHeight + 4) });
+  }
+
+  function setTheme(theme) {
+    if (theme === 'dark' || theme === 'light') document.body.dataset.theme = theme;
+  }
+
+  window.addEventListener('message', (event) => {
+    const data = event.data;
+    if (!data || typeof data !== 'object') return;
+
+    if (data.id !== undefined && pending.has(data.id)) {
+      const { resolve, reject } = pending.get(data.id);
+      pending.delete(data.id);
+      if (data.error) reject(new Error(data.error.message || 'host error'));
+      else resolve(data.result);
+      return;
+    }
+
+    switch (data.method) {
+      case 'ui/notifications/host-context-changed':
+        if (data.params && data.params.theme) setTheme(data.params.theme);
+        break;
+      case 'ui/notifications/tool-input': {
+        const args = (data.params && data.params.arguments) || {};
+        if (args.document) lastDoc = args.document;
+        if (args.range) lastRange = args.range;
+        if (args.anchor) showWaiting('正在写入 ' + args.anchor + ' …');
+        else if (args.range) showWaiting('正在读取 ' + args.range + ' …');
+        break;
+      }
+      case 'ui/notifications/tool-result':
+        rendered = true;
+        renderResult(data.params);
+        break;
+    }
+  });
+
+  function el(tag, cls, text) {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined) n.textContent = text;
+    return n;
+  }
+
+  function showWaiting(text) {
+    bodyEl.innerHTML = '';
+    bodyEl.appendChild(el('div', 'empty', text));
+    reportSize();
+  }
+
+  function showError(text) {
+    bodyEl.innerHTML = '';
+    const box = el('div', 'err');
+    box.appendChild(el('div', '', text));
+    const hint = el('div', 'hint');
+    hint.innerHTML = '可以先用 <code>open_document</code> 打开一个文档，或给扩展设置 <code>OPENCALC_DOC</code>。';
+    box.appendChild(hint);
+    bodyEl.appendChild(box);
+    reportSize();
+  }
+
+  function textOf(result) {
+    if (!result || !Array.isArray(result.content)) return '';
+    const t = result.content.find((c) => c && c.type === 'text');
+    return t ? t.text : '';
+  }
+
+  function renderResult(result) {
+    if (!result) { showError('没有收到结果'); return; }
+    if (result.isError) { showError(textOf(result) || '工具调用失败'); return; }
+    const sc = result.structuredContent;
+    if (sc && Array.isArray(sc.values)) { renderTable(sc); return; }
+    const text = textOf(result);
+    if (text) {
+      bodyEl.innerHTML = '';
+      const pre = el('div', 'empty');
+      pre.style.whiteSpace = 'pre-wrap';
+      pre.textContent = text;
+      bodyEl.appendChild(pre);
+      reportSize();
+      return;
+    }
+    showError('结果里没有可显示的数据');
+  }
+
+  function colName(n) {
+    let s = '';
+    while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26); }
+    return s;
+  }
+
+  function cellText(v) {
+    if (v === null || v === undefined) return '';
+    if (typeof v === 'number') return Number.isInteger(v) ? String(v) : String(Number(v.toPrecision(12)));
+    if (typeof v === 'object') return JSON.stringify(v);
+    return String(v);
+  }
+
+  function renderTable(sc) {
+    const values = sc.values || [];
+    const startRow = sc.startRow || 1;
+    const startCol = sc.startCol || 1;
+    $('title').textContent = sc.title || sc.document || 'OpenCalc';
+    $('meta').textContent = [sc.sheet, sc.range].filter(Boolean).join(' · ');
+
+    const cols = values.reduce((m, row) => Math.max(m, row.length), 0);
+    bodyEl.innerHTML = '';
+    if (!values.length || !cols) {
+      bodyEl.appendChild(el('div', 'empty', '区域为空'));
+      reportSize();
+      return;
+    }
+
+    const table = el('table');
+    const thead = el('thead');
+    const hr = el('tr');
+    hr.appendChild(el('th', 'rowhead', ''));
+    for (let c = 0; c < cols; c++) hr.appendChild(el('th', '', colName(startCol + c)));
+    thead.appendChild(hr);
+    table.appendChild(thead);
+
+    const tbody = el('tbody');
+    values.forEach((row, r) => {
+      const tr = el('tr');
+      tr.appendChild(el('th', 'rowhead', String(startRow + r)));
+      for (let c = 0; c < cols; c++) {
+        const v = row[c];
+        const td = el('td', typeof v === 'number' ? 'num' : '', cellText(v));
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    bodyEl.appendChild(table);
+    reportSize();
+  }
+
+  async function refresh() {
+    if (busy) return;
+    busy = true;
+    $('refresh').disabled = true;
+    try {
+      const args = { range: lastRange };
+      if (lastDoc) args.document = lastDoc;
+      const result = await request('tools/call', { name: 'read_range', arguments: args });
+      renderResult(result);
+    } catch (e) {
+      showError(e.message);
+    } finally {
+      busy = false;
+      $('refresh').disabled = false;
+    }
+  }
+
+  $('refresh').addEventListener('click', refresh);
+
+  async function boot() {
+    try {
+      const result = await request('ui/initialize', {
+        appInfo: { name: 'opencalc-panel', version: '0.1.0' },
+        appCapabilities: {},
+      });
+      const ctx = (result && result.hostContext) || {};
+      setTheme(ctx.theme);
+      notify('ui/notifications/initialized', {});
+      reportSize();
+    } catch (e) {
+      // 不在 host 里时也至少把提示显示出来。
+      showError('无法连接宿主：' + e.message);
+      return;
+    }
+
+    // 独立窗口（Apps 页面）没有工具调用的结果；自己读一次默认区域。
+    setTimeout(() => {
+      if (!rendered) refresh();
+    }, 900);
+  }
+
+  window.addEventListener('resize', reportSize);
+  boot();
+})();
+</script>
+</body>
+</html>
