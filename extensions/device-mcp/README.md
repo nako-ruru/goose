@@ -1,5 +1,11 @@
 # device-mcp（设备 MCP）
 
+> **状态（2026-11-10）**：这个独立进程版本已被 **orbitd 内置的 MCP 端点**取代。
+> daemon 现在自己提供 `http://127.0.0.1:6731/mcp`（streamable HTTP），
+> Goose 侧只需 `type: streamable_http` + `uri`，**配置里不再有任何密钥**。
+> 本目录保留作为参考实现与对照（同样的工具、同样的 ACP 链路）。
+> 见 `orbit-client/internal/daemon/mcp.go`。
+
 把 orbit-server 的设备列表/在线状态、以及"在远端设备上执行任务"的能力暴露给 agent。
 用来验证**多设备协同**的可行性：能力以插件（MCP）形式提供，**不改 Goose 源码**。
 
