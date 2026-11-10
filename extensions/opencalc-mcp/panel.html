@@ -67,6 +67,7 @@
   let lastDoc = '';
   let lastRange = 'A1:H20';
   let rendered = false;
+  let fallbackTried = false;
   let busy = false;
 
   const $ = (id) => document.getElementById(id);
@@ -164,6 +165,13 @@
     if (result.isError) { showError(textOf(result) || '工具调用失败'); return; }
     const sc = result.structuredContent;
     if (sc && Array.isArray(sc.values)) { renderTable(sc); return; }
+    // 没有表格数据（比如 open_document 只返回状态文本）→ 自动读一次默认区域，
+    // 这样画中画/独立窗口里打开面板时也能直接看到表，而不是一句状态。
+    if (!fallbackTried) {
+      fallbackTried = true;
+      refresh();
+      return;
+    }
     const text = textOf(result);
     if (text) {
       bodyEl.innerHTML = '';
@@ -252,7 +260,8 @@
     try {
       const result = await request('ui/initialize', {
         appInfo: { name: 'opencalc-panel', version: '0.1.0' },
-        appCapabilities: {},
+        // 声明支持哪些呈现方式：内联 / 全屏 / 画中画浮窗（宿主据此显示按钮）
+        appCapabilities: { availableDisplayModes: ['inline', 'fullscreen', 'pip'] },
         // 宿主（Goose 1.51 的 MCP Apps host）要求 protocolVersion 是字符串，且缺省会直接拒绝握手
         protocolVersion: '2025-11-21',
       });
