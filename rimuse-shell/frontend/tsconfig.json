@@ -1,0 +1,70 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+
+    "noEmit": true,
+    "skipLibCheck": true,
+
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable",
+    ],
+
+    "baseUrl": ".",
+    "paths": {
+      "@goose/*": ["../../ui/desktop/src/*"],
+
+      "@agentclientprotocol/sdk": ["./node_modules/@agentclientprotocol/sdk"],
+      "@agentclientprotocol/sdk/experimental/ws-client": ["./node_modules/@agentclientprotocol/sdk/dist/ws-stream"],
+      "@aaif/goose-acp-client": ["./node_modules/@aaif/goose-acp-client"],
+      "@aaif/goose-acp-client/*": ["./node_modules/@aaif/goose-acp-client/*"],
+      "@radix-ui/react-collapsible": ["./node_modules/@radix-ui/react-collapsible"],
+      "@radix-ui/react-dropdown-menu": ["./node_modules/@radix-ui/react-dropdown-menu"],
+      "@radix-ui/react-portal": ["./node_modules/@radix-ui/react-portal"],
+      "@radix-ui/react-switch": ["./node_modules/@radix-ui/react-switch"],
+      "@radix-ui/react-tooltip": ["./node_modules/@radix-ui/react-tooltip"],
+      "react-router": ["./node_modules/react-router"],
+      "react-router/*": ["./node_modules/react-router/*"],
+      "turndown": ["./node_modules/@types/turndown"],
+
+      "react": ["./node_modules/@types/react"],
+      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"],
+      "react/jsx-dev-runtime": ["./node_modules/@types/react/jsx-dev-runtime"],
+      "react-dom": ["./node_modules/@types/react-dom"],
+      "react-dom/*": ["./node_modules/@types/react-dom/*"],
+
+      "zod": ["./node_modules/zod"],
+      "zod/*": ["./node_modules/zod/*"],
+
+      "@tanstack/react-form": ["./node_modules/@tanstack/react-form"],
+      "@tanstack/react-form/*": ["./node_modules/@tanstack/react-form/*"],
+      "@tanstack/form-core": ["./node_modules/@tanstack/form-core"],
+      "@tanstack/form-core/*": ["./node_modules/@tanstack/form-core/*"],
+      "@tanstack/store": ["./node_modules/@tanstack/store"],
+      "@tanstack/store/*": ["./node_modules/@tanstack/store/*"],
+      "@tanstack/react-store": ["./node_modules/@tanstack/react-form/node_modules/@tanstack/react-store"],
+      "@tanstack/react-store/*": ["./node_modules/@tanstack/react-form/node_modules/@tanstack/react-store/*"]
+    },
+
+    "types": ["node"],
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": false,
+    "noImplicitAny": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["src", "bindings"]
+}

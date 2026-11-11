@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=My Product
+Comment=A rimuse-shell application
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/rimuse-shell.exe %u
+Terminal=false
+Type=Application
+Icon=rimuse-shell.exe
+Categories=Utility;
+StartupWMClass=rimuse-shell.exe
+
+ 
