@@ -1,13 +1,52 @@
-import {defineConfig} from "vite";
+import {defineConfig, type Plugin} from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import wails from "@wailsio/runtime/plugins/vite";
 import path from "node:path";
+import fs from "node:fs";
 import {fileURLToPath} from "node:url";
 
 const frontendDir = path.dirname(fileURLToPath(import.meta.url));
 // 上游 ui/desktop/src —— 所有移植文件现在直接从这里 import
 const gooseSrc = path.resolve(frontendDir, "../../ui/desktop/src");
+// 上游 public/ —— 运行时按根路径 fetch 的资源（audio-capture-worklet.js 等）
+const goosePublic = path.resolve(frontendDir, "../../ui/desktop/public");
+
+/**
+ * 把上游 public/ 的运行时资源同步进我们的产物（构建时复制，上游更新自动跟随，
+ * 不在我们树里留副本）。缺失这些文件时上游代码按根路径 fetch 会 404 ——
+ * 例如听写的 audioWorklet 录音模块。
+ */
+function copyGoosePublic(): Plugin {
+    const targets = () => {
+        if (!fs.existsSync(goosePublic)) return [];
+        return fs.readdirSync(goosePublic).filter((f) => fs.statSync(path.join(goosePublic, f)).isFile());
+    };
+    return {
+        name: "copy-goose-public",
+        apply: "build",
+        closeBundle() {
+            const outDir = path.join(frontendDir, "dist");
+            fs.mkdirSync(outDir, {recursive: true});
+            for (const f of targets()) {
+                fs.copyFileSync(path.join(goosePublic, f), path.join(outDir, f));
+            }
+        },
+        configureServer(server) {
+            // dev 模式同样按根路径提供上游 public 文件
+            server.middlewares.use((req, res, next) => {
+                const url = (req.url || "").split("?")[0];
+                const base = path.basename(url);
+                if (url === `/${base}` && targets().includes(base)) {
+                    res.setHeader("Content-Type", "text/javascript");
+                    res.end(fs.readFileSync(path.join(goosePublic, base)));
+                    return;
+                }
+                next();
+            });
+        },
+    };
+}
 
 export default defineConfig({
     server: {
@@ -17,7 +56,7 @@ export default defineConfig({
         // dev 模式允许访问仓库根（ui/desktop 在 vite root 之外）
         fs: {allow: [path.resolve(frontendDir, "../..")]},
     },
-    plugins: [react(), tailwindcss(), wails("./bindings")],
+    plugins: [react(), tailwindcss(), wails("./bindings"), copyGoosePublic()],
     resolve: {
         alias: {"@goose": gooseSrc},
         // 必须：ui/desktop/node_modules 存在（react 19.2.8），我们是 19.3.1。
