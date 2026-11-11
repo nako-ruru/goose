@@ -110,6 +110,31 @@ export interface ElectronShim {
     isAnyWindowFocused(): Promise<boolean>;
     showNotification(data: {title: string; body: string}): void;
     getIsFullScreen(): Promise<boolean>;
+
+    // --- App settings section (platform shell features) ---
+    reloadApp(): void;
+    openNotificationsSettings(): Promise<boolean>;
+    setMenuBarIcon(show: boolean): Promise<boolean>;
+    getMenuBarIconState(): Promise<boolean>;
+    setDockIcon(show: boolean): Promise<boolean>;
+    getDockIconState(): Promise<boolean>;
+    setWakelock(enable: boolean): Promise<boolean>;
+    getWakelockState(): Promise<boolean>;
+
+    // --- Chat settings section ---
+    setSpellcheck(enable: boolean): Promise<boolean>;
+    getSpellcheckState(): Promise<boolean>;
+    readGoosehints(): Promise<{file: string; filePath: string; error: string | null; found: boolean}>;
+    writeGoosehints(content: string): Promise<boolean>;
+
+    // --- Update section ---
+    getVersion(): string;
+    checkForUpdates(): Promise<{updateInfo: unknown; error: string | null}>;
+    downloadUpdate(): Promise<{success: boolean; error: string | null}>;
+    installUpdate(): Promise<{success: boolean; error: string | null}>;
+    onUpdaterEvent(callback: (event: {event: string; data?: unknown}) => void): void;
+    getUpdateState(): Promise<{updateAvailable: boolean; latestVersion?: string} | null>;
+    getAutoDownloadDisabled(): Promise<boolean>;
 }
 
 export const electronShim: ElectronShim = {
@@ -300,6 +325,79 @@ export const electronShim: ElectronShim = {
     async getIsFullScreen() {
         // Wails fullscreen events can be wired later; never-fullscreen is a
         // safe default (only affects macOS traffic-light inset).
+        return false;
+    },
+
+    // --- App settings section (platform shell features, webview degrades) ---
+    reloadApp() {
+        window.location.reload();
+    },
+    async openNotificationsSettings() {
+        console.warn("[shell] openNotificationsSettings not supported yet");
+        return false;
+    },
+    async setMenuBarIcon() {
+        console.warn("[shell] setMenuBarIcon not supported yet");
+        return false;
+    },
+    async getMenuBarIconState() {
+        return false;
+    },
+    async setDockIcon() {
+        console.warn("[shell] setDockIcon not supported yet");
+        return false;
+    },
+    async getDockIconState() {
+        return false;
+    },
+    async setWakelock() {
+        console.warn("[shell] setWakelock not supported yet");
+        return false;
+    },
+    async getWakelockState() {
+        return false;
+    },
+
+    // --- Chat settings section ---
+    async setSpellcheck() {
+        // WebView2 spell check is a browser-level flag; per-app toggle lands
+        // with the shell settings batch.
+        console.warn("[shell] setSpellcheck not supported yet");
+        return false;
+    },
+    async getSpellcheckState() {
+        return false;
+    },
+    async readGoosehints() {
+        return {file: "", filePath: "", error: "此发行版暂不支持 goosehints 文件。", found: false};
+    },
+    async writeGoosehints() {
+        console.warn("[shell] writeGoosehints not supported yet");
+        return false;
+    },
+
+    // --- Update section (no electron-updater in the webview shell) ---
+    getVersion() {
+        const v = appConfigShim.get("version");
+        return typeof v === "string" ? v : "0.0.0";
+    },
+    async checkForUpdates() {
+        return {updateInfo: null, error: "此发行版暂不支持应用内更新。"};
+    },
+    async downloadUpdate() {
+        return {success: false, error: "此发行版暂不支持应用内更新。"};
+    },
+    async installUpdate() {
+        return {success: false, error: "此发行版暂不支持应用内更新。"};
+    },
+    onUpdaterEvent(callback) {
+        // Register through the channel bus so a future Go-side broadcast works.
+        electronShim.on("updater-event", callback);
+    },
+    async getUpdateState() {
+        return null;
+    },
+    async getAutoDownloadDisabled() {
         return false;
     },
 };

@@ -10,7 +10,7 @@
  * and routes (useLocation requires the router above it).
  */
 import {useEffect, useRef, useState, type RefObject} from "react";
-import {HashRouter, Route, Routes, useLocation, useSearchParams} from "react-router";
+import {HashRouter, Route, Routes, useLocation, useNavigate, useSearchParams} from "react-router";
 import {ToastContainer} from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 
@@ -22,6 +22,7 @@ import {AppLayout} from "@goose/components/Layout/AppLayout";
 import Hub from "@goose/components/Hub";
 import ChatSessionsContainer from "@goose/components/ChatSessionsContainer";
 import RecipesView from "@goose/components/recipes/RecipesView";
+import SettingsView, {type SettingsViewOptions} from "@goose/components/settings/SettingsView";
 import PlaceholderView from "./components/PlaceholderView";
 import {useLiveVoice, type LiveVoiceController} from "@goose/liveVoice/useLiveVoice";
 import {useNavigation} from "@goose/hooks/useNavigation";
@@ -78,6 +79,32 @@ const PairRoute = ({
             liveVoice={liveVoice}
         />
     );
+};
+// Settings route wrapper (mirrors official App.tsx SettingsRoute).
+const SettingsRoute = () => {
+    const location = useLocation();
+    const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
+    const setView = useNavigation();
+
+    // viewOptions from location.state / history.state / URL search params
+    const viewOptions =
+        (location.state as SettingsViewOptions) || (window.history.state as SettingsViewOptions) || {};
+
+    const sectionFromUrl = searchParams.get("section");
+    if (sectionFromUrl) {
+        viewOptions.section = sectionFromUrl;
+    }
+
+    const closeSettings = () => {
+        if (location.key === "default") {
+            navigate("/");
+        } else {
+            navigate(-1);
+        }
+    };
+
+    return <SettingsView onClose={closeSettings} setView={setView} viewOptions={viewOptions} />;
 };
 // ---------------------------------------------------------------------------
 // AppInner: state + routes (must render under the router)
@@ -196,7 +223,7 @@ function AppInner() {
                         <Route path="schedules" element={<PlaceholderView name="调度" />} />
                         <Route path="extensions" element={<PlaceholderView name="扩展" />} />
                         <Route path="sessions" element={<PlaceholderView name="会话历史" />} />
-                        <Route path="settings" element={<PlaceholderView name="设置" />} />
+                        <Route path="settings" element={<SettingsRoute />} />
                         <Route path="*" element={<PlaceholderView />} />
                     </Route>
                 </Routes>
