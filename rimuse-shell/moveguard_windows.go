@@ -25,11 +25,12 @@ package main
 
 import (
 	"os"
+	"strconv"
 	"sync/atomic"
 	"time"
 )
 
-const moveThrottleNS int64 = 25_000_000 //25ms in nanoseconds
+const moveThrottleNS int64 = 500_000_000 //500ms default — see header comment
 
 const (
 	wmMove         = 0x0003
@@ -37,15 +38,27 @@ const (
 	wmExitSizeMove = 0x0232
 )
 
+// cooldownNS: per-message-type cooldown before Wails's
+// NotifyParentWindowPositionChanged is allowed through again.
+// Tunable via RIMUSE_MOVE_GUARD_MS (diagnostics / preference).
+func cooldownNS() int64 {
+	if v := os.Getenv("RIMUSE_MOVE_GUARD_MS"); v != "" {
+		if ms, err := strconv.Atoi(v); err == nil && ms >= 0 {
+			return int64(ms) * 1_000_000
+		}
+	}
+	return moveThrottleNS
+}
+
 var (
 	moveGuardEnabled    = os.Getenv("RIMUSE_NO_MOVE_GUARD") != "1"
 	lastMoveAllowedNs   atomic.Int64
 	lastMovingAllowedNs atomic.Int64
 )
 
-func throttleMoveMessage(now int64, last *atomic.Int64) bool {
+func throttleMoveMessage(now int64, last *atomic.Int64, cooldown int64) bool {
 	prev := last.Load()
-	if now-prev < moveThrottleNS {
+	if now-prev < cooldown {
 		return false // still inside the cooldown -> skip
 	}
 	last.Store(now)
@@ -59,11 +72,11 @@ func moveThrottleInterceptor() func(hwnd uintptr, msg uint32, wParam, lParam uin
 		}
 		switch msg {
 		case wmMove:
-			if !throttleMoveMessage(time.Now().UnixNano(), &lastMoveAllowedNs) {
+			if !throttleMoveMessage(time.Now().UnixNano(), &lastMoveAllowedNs, cooldownNS()) {
 				return 0, true // swallow: skip Wails's notify for this frame
 			}
 		case wmMoving:
-			if !throttleMoveMessage(time.Now().UnixNano(), &lastMovingAllowedNs) {
+			if !throttleMoveMessage(time.Now().UnixNano(), &lastMovingAllowedNs, cooldownNS()) {
 				return 1, true // swallow but tell the move loop the rect is valid
 			}
 		case wmExitSizeMove:

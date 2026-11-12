@@ -205,14 +205,19 @@ func main() {
 			// Move guard: throttle WebView2's per-frame position notify
 			// during drags (see moveguard_windows.go). nil on non-Windows.
 			WndProcInterceptor: moveThrottleInterceptor(),
-			// Visual (IDComposition) hosting instead of windowed HWND-child
-			// hosting: during window moves the webview is part of the visual
-			// tree, so dragging never round-trips a child-HWND reposition
-			// through the display driver stack (this machine has an IDD
-			// virtual-display driver loaded; windowed hosting made drag start
-			// lag by ~1s). Documented Wails workaround for WebView2
-			// controller-call UI-thread blocks.
-			UseVisualHosting: true,
+			// UseVisualHosting = false (windowed HWND-child hosting) ON
+			// PURPOSE. With visual hosting, every window move pushes the
+			// composition position through the WebView2 browser/GPU process —
+			// under contention with an active full-screen app on this iGPU,
+			// drags trailed (46-130ms per position change measured). Windowed
+			// hosting repositions a plain child HWND via USER32 (in-process,
+			// contention-insensitive) — the same model Tauri apps use; the
+			// user's openidea (Tauri/WebView2) drags smoothly over an active
+			// full-screen opencode in the exact repro where ours lagged.
+			// The original drag-start lag was traced to native occlusion calc
+			// (disabled above), idle churn and orphaned backends — not to
+			// windowed hosting, which we had wrongly blamed.
+			UseVisualHosting: false,
 		},
 	})
 	shell.app = app
