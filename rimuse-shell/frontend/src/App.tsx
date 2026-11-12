@@ -32,6 +32,7 @@ import SessionsView from "@goose/components/sessions/SessionsView";
 import PlaceholderView from "./components/PlaceholderView";
 import {useLiveVoice, type LiveVoiceController} from "@goose/liveVoice/useLiveVoice";
 import {useNavigation} from "@goose/hooks/useNavigation";
+import {reconnectAcpAfterSystemResume} from "@goose/acp/acpConnection";
 import {AppEvents} from "@goose/constants/events";
 import type {ChatType} from "@goose/types/chat";
 import type {UserInput} from "@goose/types/message";
@@ -167,6 +168,43 @@ function AppInner() {
             void stopLiveVoice();
         }
     }, [activeLiveVoiceSessionId, hasLiveVoiceEntryPoint, stopLiveVoice]);
+
+    // Backend-health watchdog (shell-owned serve, serve.go item 6):
+    // upstream's auto-recovery assumes the SAME backend comes back (transient
+    // drops); our shell respawns a NEW backend on a NEW port, so the page must
+    // notice the URL change and call the official reconnect entry. GetAcpUrl
+    // itself respawns a dead backend on demand, so this poll doubles as the
+    // lazy-restart trigger. No-op in external mode (RIMUSE_ACP_URL constant).
+    useEffect(() => {
+        let lastUrl: string | null = null;
+        let stopped = false;
+        void window.electron
+            .getAcpUrl()
+            .then((u) => {
+                lastUrl = u;
+            })
+            .catch(() => {});
+        const timer = window.setInterval(() => {
+            if (stopped) return;
+            void window.electron
+                .getAcpUrl()
+                .then((u) => {
+                    if (stopped || !u) return;
+                    if (lastUrl !== null && u !== lastUrl) {
+                        console.warn("[shell] backend URL changed, reconnecting ACP:", lastUrl, "->", u);
+                        lastUrl = u;
+                        reconnectAcpAfterSystemResume();
+                    } else {
+                        lastUrl = u;
+                    }
+                })
+                .catch(() => {});
+        }, 8000);
+        return () => {
+            stopped = true;
+            window.clearInterval(timer);
+        };
+    }, []);
 
     // Active-session lifecycle: Hub/pair dispatch window events; this list
     // feeds ChatSessionsContainer (LRU-capped, keeps streams alive).

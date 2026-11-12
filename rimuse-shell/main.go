@@ -74,18 +74,29 @@ func (s *ShellService) WindowID() uint {
 }
 
 // GetAcpUrl returns the ACP WebSocket URL of the backend (goose serve).
-// Configured via RIMUSE_ACP_URL until shell-owned process lifecycle lands.
+// Priority: RIMUSE_ACP_URL (dev override, externally managed serve) >
+// shell-owned serve (spawned on demand on a free port, respawned on demand
+// after crashes — see serve.go).
 func (s *ShellService) GetAcpUrl() (string, error) {
 	if u := os.Getenv("RIMUSE_ACP_URL"); u != "" {
 		return u, nil
 	}
-	return "", fmt.Errorf("RIMUSE_ACP_URL is not set")
+	return backend.ensureRunning()
 }
 
 // GetSecretKey returns the backend auth secret used by the MCP Apps sandbox
-// proxy. May be empty when the backend does not require one.
+// proxy. External mode uses RIMUSE_SERVE_SECRET; owned mode uses the secret
+// generated for this app run (stable across respawns).
 func (s *ShellService) GetSecretKey() (string, error) {
-	return os.Getenv("RIMUSE_SERVE_SECRET"), nil
+	if v := os.Getenv("RIMUSE_SERVE_SECRET"); v != "" {
+		return v, nil
+	}
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if backend.secret == "" {
+		backend.secret = genSecret()
+	}
+	return backend.secret, nil
 }
 
 // GetAppConfig returns startup config consumed by the renderer before the
@@ -163,6 +174,11 @@ func main() {
 		Description: "Rimuse panel shell (MCP Apps display modes on Wails v3)",
 		Services: []application.Service{
 			application.NewService(shell),
+		},
+		// Reap the shell-owned goose serve child (taskkill tree) on exit so
+		// no orphaned backend survives the app — serve.go item 5.
+		OnShutdown: func() {
+			stopBackend()
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
