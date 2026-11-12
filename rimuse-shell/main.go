@@ -190,7 +190,20 @@ func main() {
 		// Wails clears WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS (internal/webview2/webviewloader/env_create.go:169),
 		// so the flag must be passed here.
 		Windows: application.WindowsOptions{
-			AdditionalBrowserArgs: []string{"--remote-debugging-port=9224"},
+			// Chromium's native-occlusion tracker wakes the renderer and
+			// forces a full repaint the moment the window moves — that was
+			// the ~1s "drag start reaction" lag. Disabled via Wails's
+			// DisabledFeatures (it builds ONE --disable-features flag; a
+			// second one in AdditionalBrowserArgs gets dropped by Chromium).
+			DisabledFeatures: []string{
+				"msSmartScreenProtection",
+				"CalculateNativeWinOcclusion",
+			},
+			AdditionalBrowserArgs: []string{
+				"--remote-debugging-port=9224",
+			},
+			// Dev message histogram (-tags wndlog); nil in normal builds.
+			WndProcInterceptor: wndLogInterceptor(),
 			// Visual (IDComposition) hosting instead of windowed HWND-child
 			// hosting: during window moves the webview is part of the visual
 			// tree, so dragging never round-trips a child-HWND reposition

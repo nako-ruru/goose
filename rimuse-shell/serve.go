@@ -45,32 +45,8 @@ const (
 	serveTailLines         = 40
 )
 
-// tailBuffer keeps the last N lines of child output for error reporting.
-type tailBuffer struct {
-	mu    sync.Mutex
-	lines []string
-}
-
-func (t *tailBuffer) Write(p []byte) (int, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	for _, line := range strings.Split(strings.TrimRight(string(p), "\n"), "\n") {
-		if line == "" {
-			continue
-		}
-		t.lines = append(t.lines, line)
-		if len(t.lines) > serveTailLines {
-			t.lines = t.lines[len(t.lines)-serveTailLines:]
-		}
-	}
-	return len(p), nil
-}
-
-func (t *tailBuffer) tail() string {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return strings.Join(t.lines, "\n")
-}
+// tailCap bounds how much of the log file the readiness-failure report reads.
+const tailCap = 16 * 1024
 
 type gooseServeState struct {
 	mu      sync.Mutex
@@ -240,10 +216,12 @@ func (g *gooseServeState) startLocked() (string, error) {
 	cmd.Dir, _ = os.Getwd()
 	cmd.SysProcAttr = hideWindowAttr()
 
-	tail := &tailBuffer{}
-	// stdout+stderr -> log file; stderr additionally -> tail for diagnostics.
+	// stdout+stderr -> kernel-direct to the log file (child output volume can
+	// be huge — extension processes inherit the pipe — and an in-process copy
+	// loop burned ~30% of a core). No readers in our process at all; on
+	// failure we read the tail FROM THE FILE.
 	cmd.Stdout = logFile
-	cmd.Stderr = multiWriter{logFile, tail}
+	cmd.Stderr = logFile
 
 	if err := cmd.Start(); err != nil {
 		_ = logFile.Close()
@@ -280,12 +258,26 @@ func (g *gooseServeState) startLocked() (string, error) {
 
 	// Readiness: poll /status; fail early if the child dies first.
 	statusURL := fmt.Sprintf("http://127.0.0.1:%d%s", port, serveStatusPath)
+	readTail := func() string {
+		data, err := os.ReadFile(logPath)
+		if err != nil {
+			return ""
+		}
+		if len(data) > tailCap {
+			data = data[len(data)-tailCap:]
+		}
+		lines := strings.Split(string(data), "\n")
+		if len(lines) > serveTailLines {
+			lines = lines[len(lines)-serveTailLines:]
+		}
+		return strings.Join(lines, "\n")
+	}
 	deadline := time.Now().Add(serveReadinessTimeout)
 	client := &http.Client{Timeout: time.Second}
 	for time.Now().Before(deadline) {
 		select {
 		case <-waitCh:
-			return "", fmt.Errorf("goose serve exited during startup (see %s)\n%s", logPath, tail.tail())
+			return "", fmt.Errorf("goose serve exited during startup (see %s)\n%s", logPath, readTail())
 		default:
 		}
 		if resp, err := client.Get(statusURL); err == nil {
@@ -301,7 +293,7 @@ func (g *gooseServeState) startLocked() (string, error) {
 
 	// Timeout: kill the child so we never leak a half-started process.
 	stopLocked(g)
-	return "", fmt.Errorf("goose serve not ready after %s (see %s)\n%s", serveReadinessTimeout, logPath, tail.tail())
+	return "", fmt.Errorf("goose serve not ready after %s (see %s)\n%s", serveReadinessTimeout, logPath, readTail())
 }
 
 // stopLocked kills the current child tree. Idempotent.
