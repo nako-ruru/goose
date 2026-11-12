@@ -202,8 +202,9 @@ func main() {
 			AdditionalBrowserArgs: []string{
 				"--remote-debugging-port=9224",
 			},
-			// Dev message histogram (-tags wndlog); nil in normal builds.
-			WndProcInterceptor: wndLogInterceptor(),
+			// Move guard: throttle WebView2's per-frame position notify
+			// during drags (see moveguard_windows.go). nil on non-Windows.
+			WndProcInterceptor: moveThrottleInterceptor(),
 			// Visual (IDComposition) hosting instead of windowed HWND-child
 			// hosting: during window moves the webview is part of the visual
 			// tree, so dragging never round-trips a child-HWND reposition
