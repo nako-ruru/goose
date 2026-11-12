@@ -11,7 +11,7 @@ import {createRoot} from "react-dom/client";
 import {IntlProvider} from "react-intl";
 import "./styles/ours.css"; // 必须在最前：tailwind + 上游 main.css + 我们文件的 @source
 import {installShellBridge, setAppConfig} from "./bridge/electronShim";
-import {ShellService} from "../bindings/changeme";
+import {ShellService} from "./bridge/shellService";
 import {ConfigProvider} from "@goose/components/ConfigContext";
 import {applyThemeTokens} from "@goose/theme/theme-tokens";
 import {currentLocale, currentMessageLocale, loadMessages} from "@goose/i18n/index";

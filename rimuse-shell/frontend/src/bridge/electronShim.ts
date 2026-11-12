@@ -9,7 +9,7 @@
  *
  * Layering rule: this file is pure adaptation, no business logic.
  */
-import {ShellService} from "../../bindings/changeme";
+import {ShellService} from "./shellService";
 import {defaultSettings, type SettingKey, type Settings} from "@goose/utils/settings";
 import type {GooseApp} from "@goose/types/apps";
 import type {OpenExternalUrlResult} from "@goose/utils/urlSecurity";
