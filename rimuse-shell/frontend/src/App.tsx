@@ -23,6 +23,12 @@ import Hub from "@goose/components/Hub";
 import ChatSessionsContainer from "@goose/components/ChatSessionsContainer";
 import RecipesView from "@goose/components/recipes/RecipesView";
 import SettingsView, {type SettingsViewOptions} from "@goose/components/settings/SettingsView";
+import SkillsView from "@goose/components/skills/SkillsView";
+import AppsView from "@goose/components/apps/AppsView";
+import StandaloneAppView from "@goose/components/apps/StandaloneAppView";
+import SchedulesView from "@goose/components/schedule/SchedulesView";
+import ExtensionsView, {type ExtensionsViewOptions} from "@goose/components/extensions/ExtensionsView";
+import SessionsView from "@goose/components/sessions/SessionsView";
 import PlaceholderView from "./components/PlaceholderView";
 import {useLiveVoice, type LiveVoiceController} from "@goose/liveVoice/useLiveVoice";
 import {useNavigation} from "@goose/hooks/useNavigation";
@@ -105,6 +111,37 @@ const SettingsRoute = () => {
     };
 
     return <SettingsView onClose={closeSettings} setView={setView} viewOptions={viewOptions} />;
+};
+
+// Extensions route wrapper (mirrors official App.tsx ExtensionsRoute).
+const ExtensionsRoute = () => {
+    const navigate = useNavigate();
+    const location = useLocation();
+
+    const viewOptions =
+        (location.state as ExtensionsViewOptions) || (window.history.state as ExtensionsViewOptions) || {};
+
+    return (
+        <ExtensionsView
+            onClose={() => navigate(-1)}
+            setView={(view, options) => {
+                switch (view) {
+                    case "chat":
+                        navigate("/");
+                        break;
+                    case "pair":
+                        navigate("/pair", {state: options});
+                        break;
+                    case "settings":
+                        navigate("/settings", {state: options});
+                        break;
+                    default:
+                        navigate("/");
+                }
+            }}
+            viewOptions={viewOptions}
+        />
+    );
 };
 // ---------------------------------------------------------------------------
 // AppInner: state + routes (must render under the router)
@@ -197,6 +234,7 @@ function AppInner() {
             />
             <div className="relative w-screen h-screen overflow-hidden bg-background-secondary flex flex-col">
                 <Routes>
+                    <Route path="standalone-app" element={<StandaloneAppView />} />
                     <Route
                         path="/"
                         element={
@@ -218,11 +256,18 @@ function AppInner() {
                             }
                         />
                         <Route path="recipes" element={<RecipesView />} />
-                        <Route path="skills" element={<PlaceholderView name="技能" />} />
-                        <Route path="apps" element={<PlaceholderView name="应用" />} />
-                        <Route path="schedules" element={<PlaceholderView name="调度" />} />
-                        <Route path="extensions" element={<PlaceholderView name="扩展" />} />
-                        <Route path="sessions" element={<PlaceholderView name="会话历史" />} />
+                        <Route path="skills" element={<SkillsView />} />
+                        <Route path="apps" element={<AppsView />} />
+                        <Route path="schedules" element={<SchedulesView />} />
+                        <Route
+                            path="extensions"
+                            element={
+                                <ChatProvider chat={chat} setChat={setChat} contextKey="extensions">
+                                    <ExtensionsRoute />
+                                </ChatProvider>
+                            }
+                        />
+                        <Route path="sessions" element={<SessionsView />} />
                         <Route path="settings" element={<SettingsRoute />} />
                         <Route path="*" element={<PlaceholderView />} />
                     </Route>

@@ -126,6 +126,11 @@ export interface ElectronShim {
     getSpellcheckState(): Promise<boolean>;
     readGoosehints(): Promise<{file: string; filePath: string; error: string | null; found: boolean}>;
     writeGoosehints(content: string): Promise<boolean>;
+    selectRecipeFile(): Promise<{file: string; filePath: string; error: string | null; found: boolean} | null>;
+    // Optional BY DESIGN — omitted at runtime so SessionListView's own
+    // `typeof === 'function'` guard falls back to its <input type="file">
+    // path, which works fine inside the webview (real import capability).
+    selectImportSessionFile?: () => Promise<{filePath: string; contents: string; error?: string} | null>;
 
     // --- Update section ---
     getVersion(): string;
@@ -374,6 +379,12 @@ export const electronShim: ElectronShim = {
     async writeGoosehints() {
         console.warn("[shell] writeGoosehints not supported yet");
         return false;
+    },
+    async selectRecipeFile() {
+        // No native dialog in the webview; returning null behaves like the
+        // user cancelling the picker (ScheduleModal handles null).
+        console.warn("[shell] selectRecipeFile not supported yet — use manual path entry");
+        return null;
     },
 
     // --- Update section (no electron-updater in the webview shell) ---
