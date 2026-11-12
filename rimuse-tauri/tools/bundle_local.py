@@ -70,7 +70,18 @@ def stage():
 def bundle():
     # tauri downloads its own NSIS + nsis_tauri_utils.dll (hash-checked),
     # so no system NSIS is needed. --ci skips interactive prompts.
-    cmd = [str(TAURI_CLI), "bundle", "--bundles", "nsis", "--ci"]
+    #
+    # bundle.resources is injected HERE rather than living in tauri.conf.json:
+    # tauri-build's build.rs validates resource paths at COMPILE time, so a
+    # committed resources entry forces every remote compile to carry the164 MB
+    # goose.exe (that was the56 MB source zip). The runner only compiles, so
+    # it does not need the entry; packaging happens locally, where stage() has
+    # already placed the real binary.
+    cmd = [
+        str(TAURI_CLI), "bundle", "--bundles", "nsis", "--ci",
+        "--config",
+        '{"bundle":{"resources":["resources/bin/goose.exe"]}}',
+    ]
     log("running: " + " ".join(cmd))
     proc = subprocess.run(cmd, cwd=SRC_TAURI, capture_output=True, text=True, timeout=1800)
     tail = (proc.stdout + proc.stderr).strip().splitlines()[-15:]

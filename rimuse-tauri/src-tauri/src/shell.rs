@@ -32,8 +32,15 @@ const BROWSER_ARGS: &str = "--remote-debugging-port=9224";
 /// Priority: RIMUSE_ACP_URL (dev override, externally managed serve) >
 /// shell-owned serve (spawned on demand on a free port, respawned on
 /// demand after crashes — see serve.rs, P2 parity with Wails GetAcpUrl).
+///
+/// MUST be `async fn`: ensure_running() polls readiness every100 ms until the
+/// backend answers (measured8.9 s with12 extensions loading). A sync command
+/// runs that poll ON THE MAIN THREAD, which stops pumping messages — the
+/// window becomes un-draggable for the whole spawn. Measured proof:
+/// get_app_config (a pure env read) took8948 ms queued behind an8901 ms
+/// respawn. async moves the poll to a tokio worker; the UI stays live.
 #[tauri::command]
-pub fn get_acp_url() -> Result<String, String> {
+pub async fn get_acp_url() -> Result<String, String> {
     if let Ok(u) = env::var("RIMUSE_ACP_URL") {
         if !u.is_empty() {
             return Ok(u);
@@ -45,8 +52,12 @@ pub fn get_acp_url() -> Result<String, String> {
 /// Backend auth secret for the MCP Apps sandbox proxy.
 /// External mode uses RIMUSE_SERVE_SECRET; owned mode uses the per-run
 /// generated secret (stable across respawns).
+///
+/// async for the same reason as get_acp_url: managed_secret() takes the
+/// BACKEND lock, which ensure_running() can hold for the whole readiness
+/// poll — as a sync command that wait would land on the main thread too.
 #[tauri::command]
-pub fn get_secret_key() -> String {
+pub async fn get_secret_key() -> String {
     if let Ok(v) = env::var("RIMUSE_SERVE_SECRET") {
         if !v.is_empty() {
             return v;
