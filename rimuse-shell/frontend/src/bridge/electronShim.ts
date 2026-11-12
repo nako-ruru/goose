@@ -213,9 +213,10 @@ export const electronShim: ElectronShim = {
         return false;
     },
 
-    async selectFileOrDirectory() {
-        console.warn("[shell] selectFileOrDirectory not supported yet");
-        return null;
+    async selectFileOrDirectory(defaultPath) {
+        // Native picker (rfd) via the shell bridge; null = cancelled, which
+        // callers already treat as "do nothing".
+        return ShellService.SelectFileOrDirectory(defaultPath);
     },
 
     on(channel, callback) {
@@ -297,12 +298,16 @@ export const electronShim: ElectronShim = {
     },
 
     async directoryChooser() {
-        // No native dialog in MVP; DirSwitcher treats canceled as a no-op.
-        return {canceled: true, filePaths: []};
+        // Native folder picker via the shell bridge (DirSwitcher's
+        // "选择目录"); cancelling comes back as {canceled:true, []}, which
+        // DirSwitcher already treats as a no-op.
+        return ShellService.DirectoryChooser();
     },
 
-    async openDirectoryInExplorer() {
-        return false;
+    async openDirectoryInExplorer(directoryPath) {
+        // Reveal the working dir in Explorer via the shell bridge
+        // (DirSwitcher's "在文件管理器中打开").
+        return ShellService.OpenDirectoryInExplorer(directoryPath);
     },
 
     getPathForFile(file) {

@@ -151,3 +151,66 @@ fn query_escape(s: &str) -> String {
     }
     out
 }
+
+// --- Native pickers (DirSwitcher's "选择目录" / "在文件管理器中打开") ---------
+//
+// Both used to be no-op stubs in electronShim, so the buttons did nothing.
+// Wails never exposed them either (its ShellService has no such method), so
+// the shared shim degraded on both shells; these are Tauri-only additions.
+
+/// Returned to `directoryChooser()`; `filePaths` must stay camelCase because
+/// the shim's contract is Electron's OpenDialogReturnValue shape.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectoryChoice {
+    pub canceled: bool,
+    pub file_paths: Vec<String>,
+}
+
+/// "选择目录" — native folder picker (DirSwitcher).
+/// Cancelling is NOT an error: the shim maps it to `{canceled:true, []}`
+/// which DirSwitcher treats as a no-op.
+#[tauri::command]
+pub fn directory_chooser() -> Result<DirectoryChoice, String> {
+    match rfd::FileDialog::new().pick_folder() {
+        Some(p) => Ok(DirectoryChoice {
+            canceled: false,
+            file_paths: vec![p.to_string_lossy().into_owned()],
+        }),
+        None => Ok(DirectoryChoice {
+            canceled: true,
+            file_paths: Vec::new(),
+        }),
+    }
+}
+
+/// `selectFileOrDirectory()` — native file picker (SubRecipeModal browses for
+/// a recipe .yaml/.yml, so the filter mirrors that check). Returns null when
+/// cancelled, matching `Promise<string | null>`.
+#[tauri::command]
+pub fn select_file_or_directory(default_path: Option<String>) -> Result<Option<String>, String> {
+    let mut dialog = rfd::FileDialog::new().add_filter("YAML", &["yaml", "yml"]);
+    if let Some(dir) = default_path.filter(|s| !s.is_empty()) {
+        dialog = dialog.set_directory(dir);
+    }
+    Ok(dialog
+        .pick_file()
+        .map(|p| p.to_string_lossy().into_owned()))
+}
+
+/// "在文件管理器中打开" — reveal the working dir in Explorer (DirSwitcher).
+/// A file path selects it in its parent folder; a directory opens it.
+/// `explorer` exits with code1 even on success, so only spawn() matters.
+#[tauri::command]
+pub fn open_directory_in_explorer(directory_path: String) -> Result<bool, String> {
+    let target = std::path::Path::new(&directory_path);
+    let mut cmd = std::process::Command::new("explorer");
+    if target.is_file() {
+        cmd.args(["/select,", &directory_path]);
+    } else {
+        cmd.arg(&directory_path);
+    }
+    cmd.spawn()
+        .map_err(|e| format!("failed to launch explorer for {directory_path}: {e}"))?;
+    Ok(true)
+}

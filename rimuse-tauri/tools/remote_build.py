@@ -43,7 +43,11 @@ DIR_IN_ZIP = "rimuse-tauri/src-tauri"
 # attempt had `set "PATH=... (x86) ..."` and bash died with
 # `line 11: syntax error near unexpected token '('`. All real logic lives in
 # build_nsis.ps1, which rides inside the zip where bash never sees it.
-BUILD_CMD = "powershell -NoProfile -ExecutionPolicy Bypass -File build_nsis.ps1"
+# Compile ONLY. Packaging moved to the local bundle_local.py (`tauri bundle`
+# does not compile, and the164 MB goose.exe already lives on this machine),
+# so the runner no longer needs resources/ in the zip and no longer produces
+# an installer. Keeping NSIS here would re-upload56 MB every run for nothing.
+BUILD_CMD = "cargo build --release"
 
 
 def log(msg):
@@ -126,7 +130,10 @@ def stage_and_zip():
         shutil.rmtree(STAGE, ignore_errors=True)
     STAGE.mkdir(parents=True)
     for item in SRC_TAURI.iterdir():
-        if item.name == "target":
+        # target/ = build output; resources/ = the164 MB goose.exe staged for
+        # LOCAL packaging only — shipping it to the runner would turn a3 MB
+        # source zip into56 MB on every run.
+        if item.name in ("target", "resources"):
             continue
         if item.is_dir():
             shutil.copytree(item, STAGE / item.name)
@@ -273,10 +280,10 @@ def build_flow(base):
         print("\n".join(tail))
         raise RuntimeError(f"BUILD FAILED: {phase}")
 
-    # download: the bare exe (feeds the portable zip) AND the NSIS installer
+    # download: the bare exe only. The NSIS installer is produced locally by
+    # bundle_local.py, so the runner has no installer to hand over.
     for rel, out in (
         (f"{DIR_IN_ZIP}/target/release/rimuse-shell.exe", EXE_OUT),
-        (f"{DIR_IN_ZIP}/target/release/rimuse-installer.exe", INSTALLER_OUT),
     ):
         log(f"downloading {out.name}...")
         direct_request("GET", f"{base}/files/{rel}?token={SVC_TOKEN}", timeout=600, out_path=out)

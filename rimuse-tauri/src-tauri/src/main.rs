@@ -18,6 +18,9 @@ fn main() {
             shell::open_standalone,
             shell::close_window,
             shell::window_id,
+            shell::directory_chooser,
+            shell::select_file_or_directory,
+            shell::open_directory_in_explorer,
         ])
         .build(tauri::generate_context!())
         .expect("error while running rimuse shell");
