@@ -9,18 +9,30 @@ use std::collections::HashMap;
 use std::env;
 
 /// ACP WebSocket URL of the backend goose serve.
-/// P1: external backend via RIMUSE_ACP_URL (dev parity with the Wails shell);
-/// P2 replaces the error branch with the shell-owned spawn/readiness flow.
+/// Priority: RIMUSE_ACP_URL (dev override, externally managed serve) >
+/// shell-owned serve (spawned on demand on a free port, respawned on
+/// demand after crashes — see serve.rs, P2 parity with Wails GetAcpUrl).
 #[tauri::command]
 pub fn get_acp_url() -> Result<String, String> {
-    env::var("RIMUSE_ACP_URL")
-        .map_err(|_| "RIMUSE_ACP_URL is not set (shell-owned serve lands in P2)".to_string())
+    if let Ok(u) = env::var("RIMUSE_ACP_URL") {
+        if !u.is_empty() {
+            return Ok(u);
+        }
+    }
+    crate::serve::ensure_running().map(|(url, _)| url)
 }
 
-/// Backend auth secret for the MCP Apps sandbox proxy ("" when unset).
+/// Backend auth secret for the MCP Apps sandbox proxy.
+/// External mode uses RIMUSE_SERVE_SECRET; owned mode uses the per-run
+/// generated secret (stable across respawns).
 #[tauri::command]
 pub fn get_secret_key() -> String {
-    env::var("RIMUSE_SERVE_SECRET").unwrap_or_default()
+    if let Ok(v) = env::var("RIMUSE_SERVE_SECRET") {
+        if !v.is_empty() {
+            return v;
+        }
+    }
+    crate::serve::managed_secret()
 }
 
 /// Startup config hydrated into the renderer before the first chat.
