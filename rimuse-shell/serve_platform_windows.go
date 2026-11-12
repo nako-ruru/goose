@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"strconv"
 	"sync"
@@ -24,6 +25,50 @@ func killProcessTree(pid int) {
 	_ = exec.Command("taskkill", "/pid", strconv.Itoa(pid), "/f", "/t").Run()
 }
 
+// processStartTimeUnix reports (alive, startMatches) for a recorded pid.
+// The start-time guard prevents killing an innocent process that recycled
+// the PID.
+func processMatches(pid int, startUnix int64) (bool, bool) {
+	p, err := osFindProcess(pid)
+	if err != nil || p == nil {
+		return false, false
+	}
+	cur := processStartTimeUnix(pid)
+	if cur == 0 {
+		return false, false
+	}
+	// allow1s slack for filesystem/time rounding
+	diff := cur - startUnix
+	if diff < 0 {
+		diff = -diff
+	}
+	return true, diff <= 1
+}
+
+// processStartTimeUnix: Windows GetProcessTimes via Get-Process equivalent
+// (kernel32), seconds since epoch. Returns0 if unavailable.
+func processStartTimeUnix(pid int) int64 {
+	const processQueryLimitedInformation = 0x1000
+	h, err := syscall.OpenProcess(processQueryLimitedInformation, false, uint32(pid))
+	if err != nil || h == 0 {
+		return 0
+	}
+	defer syscall.CloseHandle(h)
+	var creation, exit, kernel, user int64
+	r, _, _ := procGetProcessTimes.Call(uintptr(h), uintptr(unsafe.Pointer(&creation)), uintptr(unsafe.Pointer(&exit)), uintptr(unsafe.Pointer(&kernel)), uintptr(unsafe.Pointer(&user)))
+	if r == 0 {
+		return 0
+	}
+	// FILETIME (100ns since1601) → unix seconds
+	const epochDiff = 116444736000000000
+	return (creation - epochDiff) / 10000000
+}
+
+// osFindProcess: on Windows FindProcess fails for a dead pid.
+func osFindProcess(pid int) (*os.Process, error) {
+	return os.FindProcess(pid)
+}
+
 // ---------------------------------------------------------------------------
 // Kill-on-close job object: even if the shell is force-killed (End task,
 // crash — OnShutdown never runs), Windows closes the job and takes the
@@ -36,6 +81,7 @@ var (
 	procCreateJobObject = k32.NewProc("CreateJobObjectW")
 	procAssignJob       = k32.NewProc("AssignProcessToJobObject")
 	procSetJobInfo      = k32.NewProc("SetInformationJobObject")
+	procGetProcessTimes = k32.NewProc("GetProcessTimes")
 
 	killJob     syscall.Handle
 	killJobOnce sync.Once

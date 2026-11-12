@@ -26,3 +26,7 @@ func killProcessTree(pid int) {
 // assignChildToKillJob is a Windows-only safety net; unix shells rely on
 // graceful shutdown (OnShutdown) here for now.
 func assignChildToKillJob(pid int) {}
+
+// processMatches/processStartTimeUnix: orphan reaping is Windows-only for now.
+func processMatches(pid int, startUnix int64) (bool, bool) { return false, false }
+func processStartTimeUnix(pid int) int64                   { return 0 }

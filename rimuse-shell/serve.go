@@ -159,6 +159,46 @@ func serveLogPath() string {
 	return filepath.Join(dir, "goose-serve.log")
 }
 
+// childPidFile records OUR spawned backend so a future shell start can reap
+// orphans left by a force-killed previous instance (force-kill skips
+// OnShutdown; the kill-job is best-effort when the shell sits in another
+// job). Records pid + start time so a recycled PID is never touched.
+func childPidFile() string {
+	base, err := os.UserCacheDir()
+	if err != nil || base == "" {
+		base = os.TempDir()
+	}
+	return filepath.Join(base, "rimuse", "child.pid")
+}
+
+var sweepOnce sync.Once
+
+// sweepOrphanBackends kills the goose serve recorded by a previous instance
+// of THIS shell if that exact process (pid+start-time match) is still alive.
+func sweepOrphanBackends() {
+	sweepOnce.Do(func() {
+		data, err := os.ReadFile(childPidFile())
+		if err != nil || len(data) == 0 {
+			return
+		}
+		var pid int
+		var startUnix int64
+		if _, err := fmt.Sscanf(string(data), "%d %d", &pid, &startUnix); err != nil {
+			return
+		}
+		alive, same := processMatches(pid, startUnix)
+		if alive && same {
+			log.Printf("[serve] reaping orphan backend from previous run: pid=%d", pid)
+			killProcessTree(pid)
+		}
+	})
+}
+
+func recordChild(pid int, startUnix int64) {
+	_ = os.MkdirAll(filepath.Dir(childPidFile()), 0o755)
+	_ = os.WriteFile(childPidFile(), []byte(fmt.Sprintf("%d %d", pid, startUnix)), 0o644)
+}
+
 // ---------------------------------------------------------------------------
 // lifecycle
 // ---------------------------------------------------------------------------
@@ -180,6 +220,11 @@ func (g *gooseServeState) ensureRunning() (string, error) {
 }
 
 func (g *gooseServeState) startLocked() (string, error) {
+	// Reap the previous instance's backend before (re)starting ours — a
+	// force-killed shell never runs OnShutdown, and the kill-job cannot
+	// attach when this process is itself inside another job.
+	sweepOrphanBackends()
+
 	if g.secret == "" {
 		g.secret = genSecret()
 	}
@@ -229,6 +274,13 @@ func (g *gooseServeState) startLocked() (string, error) {
 	}
 	// Ensure the child dies with the shell even on force-kill (no OnShutdown).
 	assignChildToKillJob(cmd.Process.Pid)
+	// Record it for next-run orphan reaping (pid + start time to dodge PID reuse).
+	if ps, err := os.FindProcess(cmd.Process.Pid); err == nil {
+		if t := processStartTimeUnix(cmd.Process.Pid); t != 0 {
+			recordChild(cmd.Process.Pid, t)
+		}
+		_ = ps
+	}
 
 	waitCh := make(chan struct{})
 	g.cmd = cmd
