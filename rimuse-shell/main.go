@@ -191,6 +191,14 @@ func main() {
 		// so the flag must be passed here.
 		Windows: application.WindowsOptions{
 			AdditionalBrowserArgs: []string{"--remote-debugging-port=9224"},
+			// Visual (IDComposition) hosting instead of windowed HWND-child
+			// hosting: during window moves the webview is part of the visual
+			// tree, so dragging never round-trips a child-HWND reposition
+			// through the display driver stack (this machine has an IDD
+			// virtual-display driver loaded; windowed hosting made drag start
+			// lag by ~1s). Documented Wails workaround for WebView2
+			// controller-call UI-thread blocks.
+			UseVisualHosting: true,
 		},
 	})
 	shell.app = app
