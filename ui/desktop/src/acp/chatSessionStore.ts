@@ -44,6 +44,10 @@ interface StoreEntry extends AcpChatSessionSnapshot {
   // in flight so per-notification reads don't deep-clone the growing message
   // array (see applyAcpSessionNotification / getSnapshot).
   lastSnapshot?: AcpChatSessionSnapshot;
+  // A1: pending cadence timer that materializes replayed messages into
+  // `messages` while a session-load replay streams in (see
+  // scheduleLoadingMessagesFlush).
+  loadingFlushTimer?: ReturnType<typeof setTimeout>;
 }
 
 const initialTokenState: TokenState = {
@@ -162,6 +166,10 @@ function createAcpChatSessionStoreInternal(): AcpChatSessionStoreInternal {
   };
 
   const deleteSnapshot: AcpChatSessionActions['deleteSnapshot'] = (sessionId) => {
+    const entry = sessionsById.get(sessionId);
+    if (entry) {
+      clearLoadingFlush(entry);
+    }
     sessionsById.delete(sessionId);
   };
 
@@ -204,6 +212,26 @@ function createAcpChatSessionStoreInternal(): AcpChatSessionStoreInternal {
     return snapshot;
   };
 
+  // A1: while the replay fast path below holds messages inside the adapter,
+  // copy them into the entry on a fixed cadence so the UI fills in
+  // progressively instead of staying blank until finishSessionLoad. The
+  // cadence is time-based, not per notification, so the O(n^2) per-frame
+  // cost this fast path exists to avoid stays bounded however many frames
+  // the replay contains (200ms => at most 5 materializations per second).
+  const scheduleLoadingMessagesFlush = (sessionId: string, entry: StoreEntry): void => {
+    if (entry.loadingFlushTimer !== undefined) {
+      return;
+    }
+    entry.loadingFlushTimer = setTimeout(() => {
+      entry.loadingFlushTimer = undefined;
+      if (entry.chatState !== ChatState.LoadingConversation) {
+        return;
+      }
+      entry.messages = entry.adapter.getMessages();
+      notify(sessionId, entry);
+    }, 200);
+  };
+
   const setSessionMetadata: AcpChatSessionActions['setSessionMetadata'] = (sessionId, session) => {
     const entry = getOrCreateEntry(sessionId);
     entry.session = session;
@@ -221,6 +249,7 @@ function createAcpChatSessionStoreInternal(): AcpChatSessionStoreInternal {
 
   const finishSessionLoad: AcpChatSessionActions['finishSessionLoad'] = (sessionId, session) => {
     const entry = getOrCreateEntry(sessionId);
+    clearLoadingFlush(entry);
     entry.session = session;
     entry.sessionLoadError = undefined;
     entry.progressMessage = undefined;
@@ -459,14 +488,17 @@ function createAcpChatSessionStoreInternal(): AcpChatSessionStoreInternal {
     }
     const changes = entry.adapter.apply(notification);
     // Session-load replay fast path: messages accumulate inside the adapter
-    // and are materialized once in finishSessionLoad. Copying them into the
+    // and are materialized in finishSessionLoad. Copying them into the
     // entry and re-notifying per replayed message is O(n^2) over the whole
-    // conversation and freezes the renderer on large sessions.
+    // conversation and freezes the renderer on large sessions — so instead
+    // schedule a fixed-cadence flush (A1) that keeps the UI filled in
+    // progressively without paying the per-frame cost.
     if (entry.chatState === ChatState.LoadingConversation && entry.lastSnapshot) {
       applyChatStateChanges(
         entry,
         changes.filter((change) => change.type !== 'messages')
       );
+      scheduleLoadingMessagesFlush(notification.sessionId, entry);
       return entry.lastSnapshot;
     }
     applyChatStateChanges(entry, changes);
@@ -483,6 +515,7 @@ function createAcpChatSessionStoreInternal(): AcpChatSessionStoreInternal {
           entry,
           changes.filter((change) => change.type !== 'messages')
         );
+        scheduleLoadingMessagesFlush(notification.sessionId, entry);
         return entry.lastSnapshot;
       }
       applyChatStateChanges(entry, changes);
@@ -692,7 +725,15 @@ function shouldClearProgressMessage(notification: SessionNotification): boolean 
   }
 }
 
+function clearLoadingFlush(entry: StoreEntry): void {
+  if (entry.loadingFlushTimer !== undefined) {
+    clearTimeout(entry.loadingFlushTimer);
+    entry.loadingFlushTimer = undefined;
+  }
+}
+
 function resetReplayState(entry: StoreEntry): void {
+  clearLoadingFlush(entry);
   entry.messages = [];
   entry.tokenState = { ...initialTokenState };
   entry.notifications = [];

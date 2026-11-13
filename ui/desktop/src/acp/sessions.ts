@@ -113,7 +113,16 @@ export function sessionInfoToSession(s: SessionInfo, loadMeta: LoadSessionMeta =
   };
 }
 
+// A2: sessionId -> cwd learned from every session listing/detail response
+// (sessionInfoToListItem is the single mapping point), so a cold load can
+// send session/load without first paying a serial sessionInfo round trip
+// (measured 401-800ms local RTT on the click-to-load critical path).
+const sessionCwdCache = new Map<string, string>();
+
 function sessionInfoToListItem(s: SessionInfo): SessionListItem {
+  if (s.cwd) {
+    sessionCwdCache.set(String(s.sessionId), s.cwd);
+  }
   const meta = sessionInfoMeta(s);
   return {
     id: String(s.sessionId),
@@ -206,15 +215,26 @@ export function isAcpSessionLoadInFlight(sessionId: string): boolean {
 
 async function loadAcpSession(sessionId: string): Promise<AcpLoadSessionResult> {
   const client = await getAcpClient();
-  const initialSessionInfoResponse = await client.goose.sessionInfo_unstable({ sessionId });
-  const initialSessionInfo = initialSessionInfoResponse.session;
+  // A2: cwd normally comes from the list cache above; the serial sessionInfo
+  // fetch only remains as a fallback for sessions no listing has covered.
+  let cwd = sessionCwdCache.get(sessionId);
+  if (!cwd) {
+    const initialSessionInfoResponse = await client.goose.sessionInfo_unstable({ sessionId });
+    cwd = initialSessionInfoResponse.session.cwd;
+    if (cwd) {
+      sessionCwdCache.set(sessionId, cwd);
+    }
+  }
   const response = await client.connection.agent.request(methods.agent.session.load, {
     sessionId,
-    cwd: initialSessionInfo.cwd,
+    cwd,
     mcpServers: [],
   });
   // Loading can populate missing provider/model metadata.
   const sessionInfoResponse = await client.goose.sessionInfo_unstable({ sessionId });
+  if (sessionInfoResponse.session.cwd) {
+    sessionCwdCache.set(sessionId, sessionInfoResponse.session.cwd);
+  }
 
   return {
     sessionInfo: sessionInfoResponse.session,
