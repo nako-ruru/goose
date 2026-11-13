@@ -53,6 +53,8 @@ export interface LoadSessionMeta {
   userRecipeValues?: Record<string, string> | null;
   extensionResults?: ExtensionLoadResult[] | null;
   workingDir?: string;
+  /** How many messages the server skipped in front of the replayed tail. */
+  replaySkipped?: number;
 }
 
 export interface AcpLoadSessionResult {
@@ -70,6 +72,7 @@ function parseSessionResponseMeta(rawMeta: unknown): LoadSessionMeta {
     userRecipeValues: meta.userRecipeValues,
     extensionResults: meta.extensionResults,
     workingDir: typeof meta.workingDir === 'string' ? meta.workingDir : undefined,
+    replaySkipped: typeof meta.replaySkipped === 'number' ? meta.replaySkipped : undefined,
   };
 }
 
@@ -192,13 +195,29 @@ export async function acpGetSessionListItem(sessionId: string): Promise<SessionL
   return sessionInfoToListItem(response.session);
 }
 
-export async function acpLoadSession(sessionId: string): Promise<AcpLoadSessionResult> {
+/**
+ * Tail-first session loading: the initial load replays only the most recent
+ * {@link INITIAL_HISTORY_TAIL} messages so the conversation end paints in the
+ * first flush; earlier history is backfilled on scroll (chatSessionController
+ * loadMoreSessionHistory, doubling replayTail until replaySkipped reaches 0).
+ */
+export const INITIAL_HISTORY_TAIL = 80;
+
+export interface AcpLoadSessionOptions {
+  /** How many trailing messages to replay (defaults to the initial tail). */
+  replayTail?: number;
+}
+
+export async function acpLoadSession(
+  sessionId: string,
+  options: AcpLoadSessionOptions = {}
+): Promise<AcpLoadSessionResult> {
   const pendingLoad = inFlightSessionLoads.get(sessionId);
   if (pendingLoad) {
     return pendingLoad;
   }
 
-  const loadPromise = loadAcpSession(sessionId);
+  const loadPromise = loadAcpSession(sessionId, options);
   inFlightSessionLoads.set(sessionId, loadPromise);
   try {
     return await loadPromise;
@@ -213,7 +232,10 @@ export function isAcpSessionLoadInFlight(sessionId: string): boolean {
   return inFlightSessionLoads.has(sessionId);
 }
 
-async function loadAcpSession(sessionId: string): Promise<AcpLoadSessionResult> {
+async function loadAcpSession(
+  sessionId: string,
+  options: AcpLoadSessionOptions = {}
+): Promise<AcpLoadSessionResult> {
   const client = await getAcpClient();
   // A2: cwd normally comes from the list cache above; the serial sessionInfo
   // fetch only remains as a fallback for sessions no listing has covered.
@@ -225,10 +247,15 @@ async function loadAcpSession(sessionId: string): Promise<AcpLoadSessionResult> 
       sessionCwdCache.set(sessionId, cwd);
     }
   }
+  const replayTail = options.replayTail ?? INITIAL_HISTORY_TAIL;
   const response = await client.connection.agent.request(methods.agent.session.load, {
     sessionId,
     cwd,
     mcpServers: [],
+    // Tail-first: replay only the trailing messages (the server aligns the
+    // cut to a turn boundary) so the end of the conversation paints in the
+    // first A1 flush; earlier history arrives via scroll backfill.
+    _meta: { replayTail },
   });
   // Loading can populate missing provider/model metadata.
   const sessionInfoResponse = await client.goose.sessionInfo_unstable({ sessionId });

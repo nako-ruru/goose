@@ -26,6 +26,7 @@ import { cancelAcpPermissionRequestsForSession } from './permissionRequests';
 import { acpCancelPrompt, acpPromptSession } from './prompt';
 import {
   acpForkSession,
+  INITIAL_HISTORY_TAIL,
   acpLoadSession,
   acpNewSession,
   acpTruncateSessionConversation,
@@ -165,10 +166,57 @@ async function loadSessionFromServer(
       new CustomEvent(AppEvents.SESSION_EXTENSIONS_LOADED, { detail: { sessionId } })
     );
     acpChatSessionActions.finishSessionLoad(sessionId, sessionInfoToSession(sessionInfo, meta));
+    // A3: remember how much history this session has so scroll backfill knows
+    // where to continue from (replaySkipped === 0 means already complete).
+    historyBackfillTail.set(sessionId, INITIAL_HISTORY_TAIL);
+    if ((meta.replaySkipped ?? 0) === 0) {
+      historyBackfillDone.add(sessionId);
+    } else {
+      historyBackfillDone.delete(sessionId);
+    }
     options.onSessionLoaded?.();
   } catch (error) {
     console.error('Failed to load ACP session:', error);
     acpChatSessionActions.failSessionLoad(sessionId, formatAcpError(error));
+  }
+}
+
+// A3 history backfill state: tail size of the last successful load per
+// session (doubles per scroll trigger), completion + in-flight guards.
+const historyBackfillTail = new Map<string, number>();
+const historyBackfillDone = new Set<string>();
+const historyBackfillInFlight = new Set<string>();
+
+/**
+ * Load the next slice of earlier history for a session (scroll-to-top
+ * trigger). Doubling replayTail minimizes round trips — each request pays a
+ * full server-side prepare (~0.7s), so fewer, larger loads beat fixed chunks.
+ * Stops when the server reports replaySkipped === 0.
+ */
+export async function loadMoreSessionHistory(sessionId: string): Promise<void> {
+  if (historyBackfillDone.has(sessionId) || historyBackfillInFlight.has(sessionId)) {
+    return;
+  }
+  const snapshot = acpChatSessionStore.getSnapshot(sessionId);
+  if (!snapshot?.session || snapshot.chatState !== ChatState.Idle) {
+    return;
+  }
+  const nextTail = (historyBackfillTail.get(sessionId) ?? INITIAL_HISTORY_TAIL) * 2;
+  historyBackfillInFlight.add(sessionId);
+  acpChatSessionActions.startHistoryBackfill(sessionId);
+  let commit = false;
+  try {
+    const { meta } = await acpLoadSession(sessionId, { replayTail: nextTail });
+    commit = true;
+    historyBackfillTail.set(sessionId, nextTail);
+    if ((meta.replaySkipped ?? 0) === 0) {
+      historyBackfillDone.add(sessionId);
+    }
+  } catch (error) {
+    console.warn('Failed to backfill earlier history:', error);
+  } finally {
+    acpChatSessionActions.endHistoryBackfill(sessionId, commit);
+    historyBackfillInFlight.delete(sessionId);
   }
 }
 

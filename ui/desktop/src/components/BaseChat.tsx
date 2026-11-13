@@ -13,6 +13,7 @@ import { Button } from './ui/button';
 import { ScrollArea, ScrollAreaHandle } from './ui/scroll-area';
 import { useFileDrop } from '../hooks/useFileDrop';
 import { ChatState } from '../types/chatState';
+import { loadMoreSessionHistory } from '../acp/chatSessionController';
 import { ChatType } from '../types/chat';
 import { useIsMobile } from '../hooks/use-mobile';
 import { useNavigationContextSafe } from './Layout/NavigationContext';
@@ -173,6 +174,18 @@ export default function BaseChat({
   const sessionLoaded = session !== undefined;
   const isSubagentSession = session?.session_type === 'sub_agent';
   const liveVoiceChatBusy = chatState !== ChatState.Idle;
+  // A3: scrolling near the top pulls the next slice of earlier history.
+  // One-viewport prefetch margin — every backfill pays a full server-side
+  // prepare, so trigger before the user hits the hard top, not after.
+  const handleHistoryScroll = useCallback(
+    (viewport: HTMLDivElement) => {
+      if (chatState !== ChatState.Idle || viewport.scrollTop > viewport.clientHeight) {
+        return;
+      }
+      void loadMoreSessionHistory(sessionId);
+    },
+    [chatState, sessionId]
+  );
 
   useEffect(() => {
     if (!isActiveSession || !shouldStartLiveVoice || liveVoiceAvailability === null) {
@@ -483,6 +496,7 @@ export default function BaseChat({
             ref={scrollRef}
             className={`flex-1 min-h-0 relative ${contentClassName}`}
             autoScroll
+            handleScroll={handleHistoryScroll}
             onDrop={handleDrop}
             onDragOver={handleDragOver}
             data-drop-zone="true"

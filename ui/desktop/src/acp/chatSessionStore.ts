@@ -48,6 +48,12 @@ interface StoreEntry extends AcpChatSessionSnapshot {
   // `messages` while a session-load replay streams in (see
   // scheduleLoadingMessagesFlush).
   loadingFlushTimer?: ReturnType<typeof setTimeout>;
+  // A3: history backfill (scroll-to-load-earlier). While 'accumulate',
+  // replay frames from the backfill session/load go to `backfillAdapter`
+  // instead of the live adapter; 'discard' swallows them (a prompt started
+  // while the backfill load was still streaming).
+  backfillState?: 'accumulate' | 'discard';
+  backfillAdapter?: AcpSessionNotificationAdapter;
 }
 
 const initialTokenState: TokenState = {
@@ -87,6 +93,13 @@ export interface AcpChatSessionActions {
   startSessionLoad(sessionId: string): AcpChatSessionSnapshot;
   finishSessionLoad(sessionId: string, session: Session): AcpChatSessionSnapshot;
   failSessionLoad(sessionId: string, sessionLoadError: string): AcpChatSessionSnapshot;
+  /**
+   * A3 history backfill: while active, incoming notifications accumulate in a
+   * side buffer instead of the live conversation (see finishHistoryBackfill's
+   * suffix splice). `commit: false` drops the buffered replay.
+   */
+  startHistoryBackfill(sessionId: string): AcpChatSessionSnapshot | undefined;
+  endHistoryBackfill(sessionId: string, commit: boolean): AcpChatSessionSnapshot | undefined;
   setSessionLoadError(
     sessionId: string,
     sessionLoadError: string | undefined
@@ -169,6 +182,8 @@ function createAcpChatSessionStoreInternal(): AcpChatSessionStoreInternal {
     const entry = sessionsById.get(sessionId);
     if (entry) {
       clearLoadingFlush(entry);
+      entry.backfillState = undefined;
+      entry.backfillAdapter = undefined;
     }
     sessionsById.delete(sessionId);
   };
@@ -235,6 +250,42 @@ function createAcpChatSessionStoreInternal(): AcpChatSessionStoreInternal {
   const setSessionMetadata: AcpChatSessionActions['setSessionMetadata'] = (sessionId, session) => {
     const entry = getOrCreateEntry(sessionId);
     entry.session = session;
+    return notify(sessionId, entry);
+  };
+
+  const startHistoryBackfill: AcpChatSessionActions['startHistoryBackfill'] = (sessionId) => {
+    const entry = sessionsById.get(sessionId);
+    if (!entry) {
+      return undefined;
+    }
+    entry.backfillState = 'accumulate';
+    entry.backfillAdapter = createAcpSessionNotificationAdapter();
+    return entry.lastSnapshot;
+  };
+
+  const endHistoryBackfill: AcpChatSessionActions['endHistoryBackfill'] = (sessionId, commit) => {
+    const entry = sessionsById.get(sessionId);
+    if (!entry || !entry.backfillAdapter) {
+      return undefined;
+    }
+    const incoming = entry.backfillAdapter.getMessages();
+    const accumulate = commit && entry.backfillState === 'accumulate';
+    entry.backfillState = undefined;
+    entry.backfillAdapter = undefined;
+    if (!accumulate) {
+      return entry.lastSnapshot;
+    }
+    // The backfill replay covers a suffix of the conversation: everything in
+    // it beyond what is already displayed belongs in front. Splice by count
+    // from the end — replayed messages carry fresh ids on every replay, so
+    // id-matching across replays is impossible.
+    const keep = entry.messages.length;
+    const head = incoming.length > keep ? incoming.slice(0, incoming.length - keep) : [];
+    if (head.length === 0) {
+      return entry.lastSnapshot;
+    }
+    entry.messages = [...head, ...entry.messages];
+    entry.adapter = createAdapterForEntry(entry);
     return notify(sessionId, entry);
   };
 
@@ -345,6 +396,12 @@ function createAcpChatSessionStoreInternal(): AcpChatSessionStoreInternal {
   ) => {
     const entry = getOrCreateEntry(sessionId);
     discardPendingLocalSteerMessages(entry);
+    // A live prompt owns the notification stream now: a backfill replay that
+    // is still streaming must stop contributing (its frames get dropped
+    // instead of being mistaken for live output).
+    if (entry.backfillState === 'accumulate') {
+      entry.backfillState = 'discard';
+    }
     entry.activePromptAttemptId = promptAttemptId;
     entry.activeRunId = null;
     entry.pendingCancelPromptAttemptId = null;
@@ -483,6 +540,10 @@ function createAcpChatSessionStoreInternal(): AcpChatSessionStoreInternal {
     notification
   ) => {
     const entry = getOrCreateEntry(notification.sessionId);
+    if (entry.backfillState && entry.backfillAdapter) {
+      entry.backfillAdapter.apply(notification);
+      return entry.lastSnapshot ?? snapshotFromEntry(entry);
+    }
     if (shouldClearProgressMessage(notification)) {
       entry.progressMessage = undefined;
     }
@@ -508,6 +569,10 @@ function createAcpChatSessionStoreInternal(): AcpChatSessionStoreInternal {
   const applyAcpGooseSessionNotification: AcpChatSessionActions['applyAcpGooseSessionNotification'] =
     (notification) => {
       const entry = getOrCreateEntry(notification.sessionId);
+      if (entry.backfillState && entry.backfillAdapter) {
+        entry.backfillAdapter.applyGoose(notification);
+        return entry.lastSnapshot ?? snapshotFromEntry(entry);
+      }
       const changes = entry.adapter.applyGoose(notification);
       // Same session-load replay fast path as applyAcpSessionNotification.
       if (entry.chatState === ChatState.LoadingConversation && entry.lastSnapshot) {
@@ -595,6 +660,8 @@ function createAcpChatSessionStoreInternal(): AcpChatSessionStoreInternal {
     clearPromptCancellation,
     restorePromptCancellation,
     waitForPromptCancellation,
+    startHistoryBackfill,
+    endHistoryBackfill,
     finishPromptAttemptIfCurrent,
     clearActivePromptAttempt,
     isCurrentPromptAttempt,
@@ -664,6 +731,8 @@ function actionsFromStore(store: AcpChatSessionStoreInternal): AcpChatSessionAct
     setSessionMetadata: store.setSessionMetadata,
     startSessionLoad: store.startSessionLoad,
     finishSessionLoad: store.finishSessionLoad,
+    startHistoryBackfill: store.startHistoryBackfill,
+    endHistoryBackfill: store.endHistoryBackfill,
     failSessionLoad: store.failSessionLoad,
     setSessionLoadError: store.setSessionLoadError,
     setMessages: store.setMessages,
@@ -734,6 +803,8 @@ function clearLoadingFlush(entry: StoreEntry): void {
 
 function resetReplayState(entry: StoreEntry): void {
   clearLoadingFlush(entry);
+  entry.backfillState = undefined;
+  entry.backfillAdapter = undefined;
   entry.messages = [];
   entry.tokenState = { ...initialTokenState };
   entry.notifications = [];
