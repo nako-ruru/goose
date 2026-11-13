@@ -65,7 +65,52 @@ export function connectGooseAcpClient(
     );
 
   const connection = app.connect(stream);
+  // Coalesce identical in-flight read requests: multiple components fetch the
+  // same metadata on the same tick (extensions/list x6 per session click,
+  // providers/list x2, ...), and each duplicate costs a full round trip on
+  // the click-to-load critical path. One wire request serves every caller.
+  installReadRequestCoalescer(connection);
   const goose = new GooseExtClient(connection.agent);
 
   return { connection, goose };
+}
+
+const COALESCED_READ_METHODS: ReadonlySet<string> = new Set<string>([
+  '_goose/unstable/session/extensions/list',
+  '_goose/unstable/session/info',
+  '_goose/unstable/providers/list',
+  '_goose/unstable/providers/canonical-model-info',
+  '_goose/unstable/config/read',
+  '_goose/unstable/dictation/config',
+  '_goose/unstable/session/live-voice/availability',
+  methods.agent.session.list,
+]);
+
+function installReadRequestCoalescer(connection: ClientConnection): void {
+  const agent = connection.agent as unknown as {
+    request: (method: string, params?: unknown, options?: unknown) => Promise<unknown>;
+  };
+  const original = agent.request.bind(connection.agent);
+  const inflight = new Map<string, Promise<unknown>>();
+
+  agent.request = (method, params, options) => {
+    if (!COALESCED_READ_METHODS.has(method)) {
+      return original(method, params, options);
+    }
+    let key: string;
+    try {
+      key = `${method} ${JSON.stringify(params)}`;
+    } catch {
+      return original(method, params, options);
+    }
+    const existing = inflight.get(key);
+    if (existing) {
+      return existing;
+    }
+    const pending = Promise.resolve(original(method, params, options)).finally(() => {
+      inflight.delete(key);
+    });
+    inflight.set(key, pending);
+    return pending;
+  };
 }
