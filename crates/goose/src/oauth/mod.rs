@@ -347,16 +347,7 @@ pub async fn oauth_flow_with_challenge(
 ) -> Result<AuthorizationManager, anyhow::Error> {
     let challenge = seed_oauth_challenge(challenge, mcp_server_url);
     let env_client = env_static_oauth_client();
-    let static_client = static_client.or(env_client.as_ref());""" oldString">
-pub async fn oauth_flow_with_challenge(
-    mcp_server_url: &String,
-    name: &String,
-    static_client: Option<&StaticOAuthClientConfig>,
-    challenge: Option<String>,
-) -> Result<AuthorizationManager, anyhow::Error> {
-    let env_client = env_static_oauth_client();
-    let static_client = static_client.or(env_client.as_ref());""" path">
-D:\projects\goose\crates\goose\src\oauth\mod.rs
+    let static_client = static_client.or(env_client.as_ref());
     let credential_store = GooseCredentialStore::new(name.clone());
     let mut auth_manager = AuthorizationManager::new(mcp_server_url).await?;
     auth_manager.set_credential_store(credential_store.clone());
