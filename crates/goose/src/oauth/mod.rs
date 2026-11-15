@@ -359,6 +359,25 @@ pub async fn oauth_flow_with_challenge(
         .map(|stored| stored.granted_scopes.clone())
         .unwrap_or_default();
 
+    // During non-interactive runs (e.g. the Goose GUI, where stdin/stdout are
+    // not a terminal) we must not block startup on an interactive browser
+    // OAuth flow. If no credentials are stored yet, fail fast with an
+    // "Auth required" error instead of opening a browser and waiting for a
+    // callback that nobody will complete.
+    if stored_credentials.is_none() && !std::io::stdout().is_terminal() {
+        return Err(anyhow::anyhow!(
+            "OAuth authorization required for {name}; run goose interactively to authorize"
+        ));
+    }
+""" oldString">
+    let stored_credentials = credential_store.load().await?;
+    let previous_requested_scopes = credential_store.load_requested_scopes()?;
+    let previously_granted_scopes = stored_credentials
+        .as_ref()
+        .map(|stored| stored.granted_scopes.clone())
+        .unwrap_or_default();""" path">
+D:\projects\goose\crates\goose\src\oauth\mod.rs
+
     // With a challenge in hand (e.g. a 403 insufficient_scope after a
     // previously successful authorization), a refresh cannot satisfy the new
     // scope requirement: skip straight to a full re-authorization that
