@@ -1,4 +1,4 @@
-mod persist;
+﻿mod persist;
 
 pub use persist::GooseCredentialStore;
 
@@ -310,6 +310,44 @@ pub async fn oauth_flow(
     oauth_flow_with_challenge(mcp_server_url, name, static_client, None).await
 }
 
+fn protected_resource_metadata_url(mcp_server_url: &str) -> Option<String> {
+    let mut url = url::Url::parse(mcp_server_url).ok()?;
+    url.set_query(None);
+    url.set_fragment(None);
+    url.set_path("/.well-known/oauth-protected-resource");
+    Some(url.to_string())
+}
+
+/// Some MCP servers (notably streamable HTTP endpoints whose `GET` stays open
+/// as an SSE stream) cannot be probed by rmcp's OAuth discovery without
+/// timing out. Seed discovery with the well-known protected-resource metadata
+/// URL so rmcp never has to probe the hanging endpoint. Servers that already
+/// advertise `resource_metadata` in their `WWW-Authenticate` challenge keep
+/// that value.
+fn seed_oauth_challenge(challenge: Option<String>, mcp_server_url: &str) -> Option<String> {
+    let metadata_url = protected_resource_metadata_url(mcp_server_url)?;
+    match challenge {
+        Some(existing) if existing.to_ascii_lowercase().contains("resource_metadata=") => {
+            Some(existing)
+        }
+        Some(existing) => Some(format!(
+            "{}, resource_metadata=\"{}\"",
+            existing.trim_end_matches(','),
+            metadata_url
+        )),
+        None => Some(format!("Bearer resource_metadata=\"{}\"", metadata_url)),
+    }
+}
+
+pub async fn oauth_flow_with_challenge(
+    mcp_server_url: &String,
+    name: &String,
+    static_client: Option<&StaticOAuthClientConfig>,
+    challenge: Option<String>,
+) -> Result<AuthorizationManager, anyhow::Error> {
+    let challenge = seed_oauth_challenge(challenge, mcp_server_url);
+    let env_client = env_static_oauth_client();
+    let static_client = static_client.or(env_client.as_ref());""" oldString">
 pub async fn oauth_flow_with_challenge(
     mcp_server_url: &String,
     name: &String,
@@ -317,7 +355,8 @@ pub async fn oauth_flow_with_challenge(
     challenge: Option<String>,
 ) -> Result<AuthorizationManager, anyhow::Error> {
     let env_client = env_static_oauth_client();
-    let static_client = static_client.or(env_client.as_ref());
+    let static_client = static_client.or(env_client.as_ref());""" path">
+D:\projects\goose\crates\goose\src\oauth\mod.rs
     let credential_store = GooseCredentialStore::new(name.clone());
     let mut auth_manager = AuthorizationManager::new(mcp_server_url).await?;
     auth_manager.set_credential_store(credential_store.clone());
