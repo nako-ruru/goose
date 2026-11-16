@@ -1,6 +1,0 @@
-# Local override: goose repo root pins channel1.99.0 (requires a blocked
-# download on this machine); rustup resolves the NEAREST toolchain file, so
-# this file makes our shell builds use the installed stable toolchain with
-# zero downloads. Goose's own builds from their directories are unaffected.
-[toolchain]
-channel = "stable"
